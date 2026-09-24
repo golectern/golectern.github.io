@@ -1,0 +1,2 @@
+{ "name": "Lectern", "short_name": "Lectern", "start_url": "./", "display": "standalone", "background_color": "#07090f", "theme_color": "#07090f",
+  "icons": [{ "src": "favicon.svg", "sizes": "any", "type": "image/svg+xml" }] }
