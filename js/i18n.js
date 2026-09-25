@@ -52,6 +52,7 @@ window.Hub.I18N = {
     notPublicWarn: 'Phones can’t open this address yet. Put the hub online (see the guide) or set its public address in Settings.',
     net_online: 'Online', net_connecting: 'Connecting…', net_reconnecting: 'Reconnecting…', net_offline: 'Offline — retrying', net_nohost: 'Waiting for the presenter…',
     handsUp: 'Hands up', paceLost: 'I’m lost', paceFast: 'Slow down', remoteConnected: 'Remote connected', photoAdded: 'Photo added after this slide',
+    codeBusy: 'Your classroom code is open in another tab — this tab is using {code} for now. Close the other presenter tab to keep your usual code.',
     presentTip: 'Tip: press 📱 to connect your phone as a remote. Arrow keys and clickers work too.',
     // live
     liveQuiz: 'Live quiz', quizEmpty: 'Add at least one question first', quizEnded: 'The quiz has ended.', anonymous: 'Anonymous',
@@ -151,6 +152,7 @@ window.Hub.I18N = {
     notPublicWarn: 'مۆبایلەکان هێشتا ناتوانن ئەم ناونیشانە بکەنەوە. ناوەندەکە بخەرە سەر ئینتەرنێت (ڕێنماییەکە ببینە) یان ناونیشانی گشتی لە ڕێکخستنەکان دابنێ.',
     net_online: 'سەرهێڵ', net_connecting: 'پەیوەندیکردن…', net_reconnecting: 'دووبارە پەیوەندیکردن…', net_offline: 'دەرهێڵ — هەوڵدانەوە', net_nohost: 'چاوەڕوانی پێشکەشکار…',
     handsUp: 'دەستی بەرزکراوە', paceLost: 'تێنەگەیشتم', paceFast: 'هێواشتر', remoteConnected: 'ڕیمۆت بەسترا', photoAdded: 'وێنە دوای ئەم سلایدە زیادکرا',
+    codeBusy: 'کۆدی پۆلەکەت لە تابێکی تردا کراوەیە — ئەم تابە بۆ ئێستا {code} بەکاردەهێنێت. تابەکەی تری پێشکەشکردن دابخە بۆ گەڕانەوەی کۆدە ئاساییەکەت.',
     presentTip: 'ئامۆژگاری: 📱 دابگرە بۆ بەستنی مۆبایلەکەت وەک ڕیمۆت. کلیلی تیرەکان و کلیکەریش کار دەکەن.',
     liveQuiz: 'کویزی ڕاستەوخۆ', quizEmpty: 'سەرەتا لانیکەم یەک پرسیار زیاد بکە', quizEnded: 'کویزەکە کۆتایی هات.', anonymous: 'بێناو',
     backToSlides: 'گەڕانەوە بۆ سلاید', joinTitle: 'بەشدار بە!', joinAt: 'بڕۆ بۆ', beginQuiz: 'دەستپێکردن', revealNow: 'دەرخستنی ئێستا', closeIdeas: 'داخستنی دیواری بیرۆکە',

@@ -61,7 +61,7 @@
     const net = H.net.host(code, {
       onOpen: () => { netStatus = 'online'; updateBadge(); },
       onStatus: (s) => { netStatus = s; updateBadge(); },
-      onCodeChange: (c) => { code = c; H.settings.set('classCode', c); updateBadge(); if (sessModal) { sessModal.close(); openSession(); } },
+      onCodeChange: (c) => { code = c; H.toast(t('codeBusy', { code: c })); updateBadge(); if (sessModal) { sessModal.close(); openSession(); } },
       onConn: (conn) => {
         const role = conn.metadata && conn.metadata.role;
         if (role === 'aud') live.join(conn);
@@ -137,7 +137,8 @@
         document.body.appendChild(hidden);
         const pv = lib.init(holder, { width: bw, height: bh, mode: 'slide' });
         const blob = await H.store.getBlob(srcId);
-        await pv.load(await blob.arrayBuffer());
+        await pv.load(await H.pptxRepair(await blob.arrayBuffer()));
+        if (!pv.slideCount) throw new Error('No slides could be read from this PowerPoint file');
         return { pv, holder, hidden };
       })();
       pptxCache.set(srcId, p);

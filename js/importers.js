@@ -166,6 +166,26 @@
     return null;
   };
 
+  /** PowerPoint tolerates files that list parts which aren't actually inside the file
+      (common in decks made by other apps); the slide renderer doesn't, so drop those entries. */
+  H.pptxRepair = async function (buf) {
+    try {
+      const JSZip = await H.need.zip();
+      const z = await JSZip.loadAsync(buf);
+      const f = z.file('[Content_Types].xml');
+      if (!f) return buf;
+      const ct = await f.async('string');
+      let changed = false;
+      const fixed = ct.replace(/<Override\b[^>]*PartName="([^"]+)"[^>]*\/>/g, (m, p) => {
+        if (z.file(decodeURIComponent(p).replace(/^\//, ''))) return m;
+        changed = true; return '';
+      });
+      if (!changed) return buf;
+      z.file('[Content_Types].xml', fixed);
+      return await z.generateAsync({ type: 'arraybuffer' });
+    } catch (e) { console.warn('pptx repair skipped', e); return buf; }
+  };
+
   H.importers = {
     accept: '.pdf,.pptx,.png,.jpg,.jpeg,.gif,.webp,.svg,.bmp,.mp4,.webm,.mov,.m4v,application/pdf,image/*,video/*',
     async fromFile(file, onProgress) {
