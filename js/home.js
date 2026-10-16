@@ -102,7 +102,7 @@
       qz.appendChild(h('div.lesson-row',
         h('div.thumb.quiz-thumb', h('span.thumb-ico', '🧠')),
         h('div.lesson-main', h('div.lesson-title', q.title || t('untitled')),
-          h('div.muted.sm', t('nQuestions', { n: (q.questions || []).length }), q.subject ? ' · ' + q.subject : '', q.selfPaced ? ' · 🚶 ' + t('selfPaced') : q.exam ? ' · 🔒 ' + t('examMode') : '')),
+          h('div.muted.sm', t('nQuestions', { n: (q.questions || []).length }), q.subject ? ' · ' + q.subject : '', q.selfPaced ? ' · 🚶 ' + t('selfPaced') : H.quizIsExam(q) ? ' · 🔒 ' + t('examMode') : ' · 🎉 ' + t('liveMode'))),
         h('div.lesson-actions',
           h('a.btn.ghost', { href: '#/quiz/' + q.id }, '✎ ' + t('edit')),
           h('button.icon-btn', { title: t('more'), 'aria-label': t('more'), on: { click: (e) => H.ui.menu(e.currentTarget, [

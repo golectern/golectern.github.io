@@ -128,7 +128,7 @@
     const isScored = (q) => q && ['mcq', 'tf', 'order'].includes(q.type) || q && q.type === 'open' && (q.accept || q.scoring === 'manual');
     function startQuiz(quiz, opts = {}) {
       if (!quiz || !(quiz.questions || []).length) { H.toast(t('quizEmpty'), 'err'); return; }
-      run = { quiz: JSON.parse(JSON.stringify(quiz)), qi: -1, phase: 'lobby', answers: {}, ideas: {}, exam: !!(quiz.exam || quiz.selfPaced), self: !!quiz.selfPaced, confetti: !(quiz.exam || quiz.selfPaced), subject: opts.subject || quiz.subject || '', startedAt: Date.now(), spotlight: null };
+      run = { quiz: JSON.parse(JSON.stringify(quiz)), qi: -1, phase: 'lobby', answers: {}, ideas: {}, exam: H.quizIsExam(quiz), self: !!quiz.selfPaced, confetti: !H.quizIsExam(quiz), subject: opts.subject || quiz.subject || '', startedAt: Date.now(), spotlight: null };
       Object.values(P).forEach((p) => { p.score = 0; p.correct = 0; p.incorrect = 0; p.team = null; });
       run.teams = H.clamp(parseInt(quiz.teams, 10) || 0, 0, 6);
       if (run.teams < 2) run.teams = 0;
@@ -805,7 +805,7 @@
         saved.innerHTML = '';
         if (!qs.length) saved.appendChild(h('p.muted', t('noQuizzes')));
         qs.sort((a, b) => (b.updated || 0) - (a.updated || 0)).forEach((qz) => saved.appendChild(h('div.lesson-row',
-          h('div.lesson-main', h('div.lesson-title', qz.title || t('untitled')), h('div.muted.sm', t('nQuestions', { n: qz.questions.length }))),
+          h('div.lesson-main', h('div.lesson-title', qz.title || t('untitled')), h('div.muted.sm', t('nQuestions', { n: qz.questions.length }), ' · ', qz.selfPaced ? '🚶 ' + t('selfPaced') : H.quizIsExam(qz) ? '🔒 ' + t('examMode') : '🎉 ' + t('liveMode'))),
           h('div.lesson-actions', h('button.btn.success', { on: { click: () => { panel.close(); startQuiz(qz, { subject: subject.value }); } } }, '▶ ' + t('start'))))));
       });
       const draft = H.quizNew();

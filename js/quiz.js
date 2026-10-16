@@ -5,6 +5,9 @@
   const TYPES = ['mcq', 'tf', 'poll', 'open', 'order', 'cloud', 'ideas', 'scale'];
   const TYPE_ICON = { mcq: '🔘', tf: '✅', poll: '📊', open: '✍️', order: '🔢', cloud: '☁️', ideas: '💡', scale: '🎚️' };
 
+  /** Exam mode is the default. Only quizzes switched to "live" (exam: false), or made only of
+      opinion questions (poll, word cloud, idea wall, rating), run as a normal live quiz. */
+  H.quizIsExam = (q) => !!q && (q.selfPaced || q.exam === true || (q.exam !== false && (q.questions || []).some((x) => ['mcq', 'tf', 'open', 'order'].includes(x.type))));
   H.quizNew = () => ({ id: 'z_' + H.uid(), title: '', subject: '', questions: [], created: Date.now(), updated: Date.now() });
   const blankQ = (type = 'mcq') => ({
     id: 'q_' + H.uid(6), type, text: '', image: '',
@@ -161,7 +164,7 @@
       const badges = h('span.qs-badges');
       const sub = h('div.qs-sub');
       const refresh = () => {
-        const on = [quiz.exam || quiz.selfPaced ? '🔒 ' + t('examMode') : null, quiz.selfPaced ? '🚶 ' + t('selfPaced') : null,
+        const on = [quiz.exam !== false || quiz.selfPaced ? '🔒 ' + t('examMode') : '🎉 ' + t('liveMode'), quiz.selfPaced ? '🚶 ' + t('selfPaced') : null,
           quiz.speed === 0 ? '⚡ ' + t('speedOff') : quiz.speed === 100 ? '⚡ 100%' : null, quiz.streak ? '🔥 ' + t('streakBonus') : null, +quiz.teams ? '👥 ' + quiz.teams : null].filter(Boolean);
         badges.textContent = on.length ? on.join(' · ') : t('defaultsHint');
         sub.hidden = !quiz.selfPaced;
@@ -173,10 +176,10 @@
         chk('shuffleQ', t('shuffleQ'), t('shuffleQHint')),
         chk('noBack', t('noBack'), t('noBackHint')),
         h('div.row.wrap', h('span', '⏱ ' + t('totalTime')), total, h('span.muted.sm', t('totalTimeHint'))));
-      const panel = h('details.qs', { open: !!(quiz.exam || quiz.selfPaced || quiz.speed != null || quiz.streak || +quiz.teams) },
+      const panel = h('details.qs', { open: !!(quiz.selfPaced || quiz.speed != null || quiz.streak || +quiz.teams) },
         h('summary', h('b', '⚙ ' + t('quizSettings')), ' ', badges),
         h('div.qs-body',
-          chk('exam', '🔒 ' + t('examMode'), t('examModeHint')),
+          h('label.check', h('input', { type: 'checkbox', checked: quiz.exam !== false || !!quiz.selfPaced, on: { change: (e) => { quiz.exam = e.target.checked; refresh(); } } }), ' ', h('b', '🔒 ' + t('examMode')), h('span.muted.sm', ' — ' + t('examModeHint') + ' ' + t('examDefaultHint'))),
           chk('selfPaced', '🚶 ' + t('selfPaced'), t('selfPacedHint')),
           sub,
           h('div.row.wrap.quiz-opts',
@@ -251,7 +254,7 @@
         ['Accepted answers (Open only): comma-separated answers that are marked right automatically.'],
         ['Sheet name becomes the quiz title. You can put several quizzes in one file (one per sheet).'],
         ['Optional extra column "Speed bonus" (off, 50 or 100): how much of the points depend on answering fast. Leave it out to keep the default (50).'],
-        ['Exam mode: add "(exam)" to the sheet name, e.g. "Unit 2 (exam)". Answers stay hidden until the end, questions advance automatically and options are shuffled. ("[exam]" also works in files from Google Sheets.)']]);
+        ['Quizzes run in exam mode by default: answers stay hidden until the end, questions advance automatically and options are shuffled. For a normal live game with answers after each question, add "(live)" to the sheet name, e.g. "Warm-up (live)".']]);
       const wb = X.utils.book_new();
       X.utils.book_append_sheet(wb, ws, 'My quiz');
       X.utils.book_append_sheet(wb, help, 'Help');
@@ -270,8 +273,10 @@
         const cT = col(/^type/, 0), cQ = col(/question/, 1), cC = col(/correct|answer$/, 8), cTime = col(/time/, 9), cP = col(/point|worth/, 10), cA = col(/accept/, 11), cS = col(/source/, 12), cSp = col(/speed/, -1);
         const optCols = head.map((x, i) => (/^option|^choice/.test(x) ? i : -1)).filter((i) => i >= 0);
         const qz = H.quizNew(); qz.title = name;
-        // "[exam]" (or "(exam)", since Excel doesn't allow [ ] in sheet names) in the sheet name switches on exam mode
-        if (/\[exam\]|\(exam\)/i.test(name)) { qz.exam = true; qz.title = name.replace(/\s*(\[exam\]|\(exam\))\s*/ig, ' ').trim() || 'Quiz'; }
+        // exam mode is the default; "(live)" in the sheet name makes it a normal live quiz ("(exam)"/"[exam]" still accepted)
+        if (/\[exam\]|\(exam\)/i.test(name)) qz.exam = true;
+        if (/\[live\]|\(live\)/i.test(name)) qz.exam = false;
+        qz.title = name.replace(/\s*(\[(exam|live)\]|\((exam|live)\))\s*/ig, ' ').trim() || 'Quiz';
         for (const r of rows.slice(1)) {
           const text = String(r[cQ] || '').trim();
           if (!text) continue;
@@ -332,7 +337,7 @@
       }));
       const wb = X.utils.book_new();
       const sheet = (q.title || 'Quiz').replace(/[\\/?*[\]:]/g, ' ');
-      X.utils.book_append_sheet(wb, X.utils.aoa_to_sheet(rows), q.exam ? sheet.slice(0, 24).trim() + ' (exam)' : sheet.slice(0, 31));
+      X.utils.book_append_sheet(wb, X.utils.aoa_to_sheet(rows), q.exam === false ? sheet.slice(0, 24).trim() + ' (live)' : sheet.slice(0, 31));
       X.writeFile(wb, (q.title || 'quiz').replace(/[^\w\- ]+/g, '') + '.xlsx');
     },
   };
