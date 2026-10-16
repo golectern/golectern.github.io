@@ -11,6 +11,8 @@
 
   H.live.create = function ({ net, wrap, lesson, getCode, onChange }) {
     const P = {};              // participants by pid
+    const kicked = new Set();  // pids removed by the teacher this session
+    let roomLocked = false;
     const connPid = new Map(); // connectionId -> pid
     const qna = [];            // {id,pid,text,at,votes:Set,answered}
     const bank = [];           // student-submitted questions
@@ -31,6 +33,12 @@
     function join(conn) {
       const md = conn.metadata || {};
       const pid = String(md.pid || conn.peer).slice(0, 40);
+      // removed students stay out; a locked room only lets known phones back in
+      if (kicked.has(pid) || (roomLocked && !P[pid])) {
+        net.send(conn, { t: kicked.has(pid) ? 'kicked' : 'locked' });
+        setTimeout(() => { try { conn.close(); } catch (e) { /* ignore */ } }, 400);
+        return;
+      }
       connPid.set(conn.connectionId, pid);
       const p = P[pid] || (P[pid] = { pid, name: '', emoji: '', joinedAt: Date.now(), score: 0, correct: 0, incorrect: 0, hand: false, pace: null, conns: new Set(), picks: 0 });
       p.conns.add(conn.connectionId);
@@ -62,6 +70,8 @@
         case 'join':
           p.name = String(m.name || '').trim().slice(0, 30);
           p.emoji = String(m.emoji || '').slice(0, 8);
+          assignTeam(p); // late joiner during a team quiz
+          if (run && run.phase === 'self' && p.name) spInit(p);
           break;
         case 'answer': answer(p, m); break;
         case 'ask':
@@ -78,6 +88,15 @@
           return; // no state change
         case 'hand': p.hand = !!m.up; if (p.hand) H.beep(660, 90); break;
         case 'pace': p.pace = ['lost', 'fast'].includes(m.v) ? m.v : null; break;
+        case 'away': { // exam: student left the quiz screen during a question
+          const S = run && run.phase === 'self' && run.sp[pid];
+          const cq = S ? run.quiz.questions.find((x) => x.id === m.qid && S.order.includes(x.id)) : curQ();
+          if (!run || !run.exam || !(run.phase === 'q' || S) || !cq) return;
+          const W = (run.away = run.away || {});
+          (W[cq.id] = W[cq.id] || {})[pid] = (W[cq.id][pid] || 0) + 1;
+          p.away = (p.away || 0) + 1;
+          break;
+        }
         case 'bank': {
           if (!bankOpen) return;
           const mine = bank.filter((b) => b.pid === pid).length;
@@ -87,6 +106,7 @@
           bank.push({ id: H.uid(8), pid, author: p.name, q, at: Date.now() });
           break;
         }
+        case 'sp': spMsg(p, m); break;
         case 'idea': ideaPost(p, m); break;
         case 'ideaComment': ideaComment(p, m); break;
         case 'ideaReact': ideaReact(p, m); break;
@@ -105,21 +125,28 @@
 
     // ---------------- quiz runtime ----------------
     const curQ = () => run && run.quiz.questions[run.qi];
-    const isScored = (q) => q && ['mcq', 'tf'].includes(q.type) || q && q.type === 'open' && (q.accept || q.scoring === 'manual');
+    const isScored = (q) => q && ['mcq', 'tf', 'order'].includes(q.type) || q && q.type === 'open' && (q.accept || q.scoring === 'manual');
     function startQuiz(quiz, opts = {}) {
       if (!quiz || !(quiz.questions || []).length) { H.toast(t('quizEmpty'), 'err'); return; }
-      run = { quiz: JSON.parse(JSON.stringify(quiz)), qi: -1, phase: 'lobby', answers: {}, ideas: {}, confetti: true, subject: opts.subject || quiz.subject || '', startedAt: Date.now(), spotlight: null };
-      Object.values(P).forEach((p) => { p.score = 0; p.correct = 0; p.incorrect = 0; });
+      run = { quiz: JSON.parse(JSON.stringify(quiz)), qi: -1, phase: 'lobby', answers: {}, ideas: {}, exam: !!(quiz.exam || quiz.selfPaced), self: !!quiz.selfPaced, confetti: !(quiz.exam || quiz.selfPaced), subject: opts.subject || quiz.subject || '', startedAt: Date.now(), spotlight: null };
+      Object.values(P).forEach((p) => { p.score = 0; p.correct = 0; p.incorrect = 0; p.team = null; });
+      run.teams = H.clamp(parseInt(quiz.teams, 10) || 0, 0, 6);
+      if (run.teams < 2) run.teams = 0;
+      else named().sort((a, b) => a.joinedAt - b.joinedAt).forEach((p, i) => { p.team = i % run.teams; });
       stageMode = 'quiz';
       changed();
     }
     function nextQ() {
       if (!run) return;
+      if (run.self) { if (run.phase === 'lobby') startSelf(); return; }
       if (run.phase === 'q') { reveal(); return; }
+      if (run.phase === 'done') return;
+      clearTimeout(run.gapTimer);
       if (run.qi + 1 >= run.quiz.questions.length) { finish(); return; }
       run.qi++;
       run.phase = 'q';
       run.t0 = Date.now();
+      (run.qT0 = run.qT0 || {})[curQ().id] = run.t0;
       run.spotlight = null;
       const q = curQ();
       run.answers[q.id] = run.answers[q.id] || {};
@@ -133,22 +160,31 @@
     function reveal() {
       if (!run || run.phase !== 'q') return;
       clearTimeout(run.timer);
+      if (run.exam) {
+        // exam: no reveal — short pause, then the next question (or the end)
+        run.phase = 'gap';
+        const qi = run.qi;
+        clearTimeout(run.gapTimer);
+        run.gapTimer = setTimeout(() => { if (run && run.phase === 'gap' && run.qi === qi) nextQ(); }, 1200);
+        changed();
+        return;
+      }
       run.phase = 'reveal';
       const q = curQ();
       const correctCount = Object.values(run.answers[q.id] || {}).filter((a) => a.ok).length;
       if (run.confetti && ['mcq', 'tf'].includes(q.type) && correctCount) H.confetti(stage, 90);
       changed();
     }
-    function board() { if (!run) return; clearTimeout(run.timer); if (run.phase === 'q') reveal(); run.phase = 'board'; changed(); }
+    function board() { if (!run || run.exam) return; clearTimeout(run.timer); if (run.phase === 'q') reveal(); run.phase = 'board'; changed(); }
     function finish() {
       if (!run) return;
-      clearTimeout(run.timer);
+      clearTimeout(run.timer); clearTimeout(run.gapTimer); clearInterval(run.spTick);
       run.phase = 'done';
       if (run.confetti) H.confetti(stage, 180);
       saveResults();
       changed();
     }
-    function endQuiz() { if (run && run.phase !== 'done' && run.qi >= 0) saveResults(); run = null; if (stageMode === 'quiz') stageMode = null; changed(); }
+    function endQuiz() { if (run) { clearTimeout(run.timer); clearTimeout(run.gapTimer); clearInterval(run.spTick); } if (run && run.phase !== 'done' && (run.qi >= 0 || run.phase === 'self')) saveResults(); run = null; if (stageMode === 'quiz') stageMode = null; changed(); }
     function timeLeft(q) { if (!run || !q || !(q.time > 0)) return null; return Math.max(0, q.time - (Date.now() - run.t0) / 1000); }
 
     function answer(p, m) {
@@ -164,30 +200,185 @@
       }
       if (q.type === 'ideas') return;
       if (A[p.pid] && !q.allowChange) return;
-      const a = { v: m.v, at: Date.now() };
-      if (q.type === 'open') a.v = String(m.v || '').trim().slice(0, 500);
-      if (q.type === 'scale') a.v = H.clamp(parseInt(m.v, 10) || 0, 1, q.scaleMax || 5);
-      if (['mcq', 'tf', 'poll'].includes(q.type)) a.v = parseInt(m.v, 10);
-      if (['mcq', 'tf'].includes(q.type)) {
-        a.ok = a.v === q.correct;
-        a.score = a.ok ? autoScore(q, a.at) : 0;
-      } else if (q.type === 'open' && q.accept) {
-        const norm = (s) => String(s).toLowerCase().replace(/[^\p{L}\p{N} ]/gu, '').replace(/\s+/g, ' ').trim();
-        a.ok = String(q.accept).split(/[,;\n]/).map(norm).filter(Boolean).includes(norm(a.v));
-        a.score = a.ok ? autoScore(q, a.at) : 0;
+      const a = grade(q, m.v, Date.now());
+      if (!a) return;
+      if (run.quiz.streak && a.ok) {
+        // streak bonus: +10% for each correct answer in a row before this one (max +50%)
+        let n = 0;
+        for (let i = run.qi - 1; i >= 0; i--) {
+          const pq = run.quiz.questions[i];
+          if (!isScored(pq)) continue;
+          const pa = (run.answers[pq.id] || {})[p.pid];
+          if (pa && pa.ok) n++; else break;
+        }
+        a.streak = n + 1;
+        a.bonus = Math.round((q.points == null ? 1000 : +q.points) * 0.1 * Math.min(n, 5));
+        a.score += a.bonus;
       }
       A[p.pid] = a;
       recompute();
       // everyone answered? reveal automatically
       const expected = online().filter((x) => x.name).length;
-      if (expected && Object.keys(A).length >= expected && q.autoReveal !== false && ['mcq', 'tf', 'poll', 'scale'].includes(q.type)) setTimeout(() => { if (run && curQ() === q && run.phase === 'q') reveal(); }, 700);
+      if (expected && Object.keys(A).length >= expected && q.autoReveal !== false && (run.exam ? ['mcq', 'tf', 'poll', 'scale', 'open', 'order'] : ['mcq', 'tf', 'poll', 'scale', 'order']).includes(q.type)) setTimeout(() => { if (run && curQ() === q && run.phase === 'q') reveal(); }, 700);
+    }
+    // ---------------- self-paced exam (optional) ----------------
+    // Every student gets their own question order, position and timer; the teacher sees progress only.
+    const SP_TYPES = ['mcq', 'tf', 'poll', 'open', 'order', 'scale', 'cloud'];
+    function startSelf() {
+      const qz = run.quiz;
+      run.phase = 'self';
+      run.t0 = Date.now();
+      run.sp = {};
+      run.noBack = !!qz.noBack;
+      const qs = qz.questions.filter((q) => SP_TYPES.includes(q.type));
+      const total = +qz.totalTime > 0 ? +qz.totalTime * 60 : qs.every((q) => q.time > 0) ? qs.reduce((n, q) => n + +q.time, 0) : 0;
+      run.endsAt = !run.noBack && total ? run.t0 + total * 1000 : null;
+      named().forEach(spInit);
+      clearInterval(run.spTick);
+      run.spTick = setInterval(spTickFn, 1000);
+      H.beep(520, 90);
+      changed();
+    }
+    function spInit(p) {
+      if (!run || run.sp[p.pid]) return;
+      const ids = run.quiz.questions.filter((q) => SP_TYPES.includes(q.type)).map((q) => q.id);
+      if (run.quiz.shuffleQ) for (let i = ids.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [ids[i], ids[j]] = [ids[j], ids[i]]; }
+      run.sp[p.pid] = { order: ids, cur: 0, qStart: Date.now(), flags: [], submitted: false };
+    }
+    const spQ = (id) => run.quiz.questions.find((q) => q.id === id);
+    function spAdvance(S) {
+      S.cur++; S.qStart = Date.now();
+      if (S.cur >= S.order.length) { S.submitted = true; S.at = Date.now(); }
+    }
+    function spDoneCheck() {
+      const live = Object.keys(run.sp).filter((pid) => P[pid] && P[pid].name);
+      if (live.length && live.every((pid) => run.sp[pid].submitted)) setTimeout(() => { if (run && run.phase === 'self') finish(); }, 600);
+    }
+    function spTickFn() {
+      if (!run || run.phase !== 'self') return;
+      const now = Date.now();
+      let ch = false;
+      for (const pid in run.sp) {
+        const S = run.sp[pid];
+        if (S.submitted) continue;
+        if (run.endsAt && now > run.endsAt + 800) { S.submitted = true; S.at = now; ch = true; continue; }
+        if (run.noBack) { const q = spQ(S.order[S.cur]); if (q && q.time > 0 && now - S.qStart > q.time * 1000 + 800) { spAdvance(S); ch = true; } }
+      }
+      if (ch) { changed(); spDoneCheck(); }
+    }
+    function spMsg(p, m) {
+      if (!run || run.phase !== 'self') return;
+      const S = run.sp[p.pid];
+      if (!S || S.submitted) return;
+      if (m.a === 'answer') {
+        const q = spQ(m.qid);
+        if (!q || !S.order.includes(q.id)) return;
+        if (run.noBack && S.order[S.cur] !== q.id) return;
+        const now = Date.now();
+        let a;
+        if (q.type === 'cloud') {
+          const words = (Array.isArray(m.v) ? m.v : [m.v]).map((w) => String(w || '').trim().slice(0, 40)).filter(Boolean).slice(0, q.maxPer || 3);
+          if (!words.length) return;
+          a = { v: words, at: now };
+        } else a = grade(q, m.v, now, true);
+        if (!a) return;
+        a.time = (now - (run.noBack ? S.qStart : run.t0)) / 1000;
+        (run.answers[q.id] = run.answers[q.id] || {})[p.pid] = a;
+        recompute();
+        if (run.noBack) spAdvance(S);
+      } else if (m.a === 'flag' && !run.noBack) {
+        const i = S.flags.indexOf(m.qid);
+        if (i >= 0) S.flags.splice(i, 1); else if (S.order.includes(m.qid)) S.flags.push(m.qid);
+      } else if (m.a === 'submit') { S.submitted = true; S.at = Date.now(); }
+      else return;
+      changed();
+      spDoneCheck();
+    }
+    /** What one student's phone needs (never the correct answers) */
+    function spState(pid) {
+      const S = run.sp[pid];
+      if (!S) return { waiting: true };
+      const pub = (q) => ({ id: q.id, type: q.type, text: q.text, image: q.image || '', time: q.time || 0, scaleMax: q.scaleMax || 5, scaleLabels: q.scaleLabels || '', maxPer: q.maxPer || 3,
+        options: (q.type === 'order' ? orderPerm(q).map((k) => q.options[k]) : q.options || []).map((o) => ({ text: o.text, image: o.image || '' })),
+        shuffle: q.type === 'mcq' && !q.fixedOrder && !(q.options || []).some((o) => /\b(all|none|both|neither) of the above\b|^(both|neither)\b/i.test(o.text || '')) });
+      const mine = (q) => {
+        const a = (run.answers[q.id] || {})[pid];
+        if (!a) return undefined;
+        if (q.type === 'order') { const perm = orderPerm(q); return a.v.map((k) => perm.indexOf(k)); }
+        return a.v;
+      };
+      const ids = run.noBack ? (S.submitted ? [] : [S.order[S.cur]]) : S.order;
+      const answers = {};
+      S.order.forEach((id) => { const v = mine(spQ(id)); if (v !== undefined) answers[id] = v; });
+      const cq = run.noBack && !S.submitted ? spQ(S.order[S.cur]) : null;
+      return {
+        noBack: run.noBack, n: S.order.length, cur: S.cur, submitted: S.submitted, flags: S.flags.slice(), answers,
+        questions: ids.map((id) => pub(spQ(id))),
+        left: run.endsAt ? Math.max(0, (run.endsAt - Date.now()) / 1000) : null,
+        qLeft: cq && cq.time > 0 ? Math.max(0, cq.time - (Date.now() - S.qStart) / 1000) : null,
+      };
+    }
+    function selfView() {
+      const rows = named().filter((p) => run.sp[p.pid]).map((p) => {
+        const S = run.sp[p.pid];
+        const done = S.order.filter((id) => (run.answers[id] || {})[p.pid]).length;
+        return h('div.sp-row' + (S.submitted ? '.done' : ''),
+          h('span.sp-name', emojiOf(p.pid) + ' ' + p.name),
+          h('span.sp-bar', h('i', { style: { width: (done / Math.max(1, S.order.length) * 100) + '%' } })),
+          h('span.sp-num', `${done}/${S.order.length}`),
+          h('span.sp-flags', (S.flags.length ? '🚩' + S.flags.length + ' ' : '') + (p.away ? '⚠️' + p.away + ' ' : '') + (S.submitted ? '✅' : p.conns.size ? '' : '⚪')));
+      });
+      const sub = Object.values(run.sp).filter((S) => S.submitted).length;
+      const timer = h('span.sp-timer');
+      if (run.endsAt) { const upd = () => { timer.textContent = '⏱ ' + H.fmtTime(Math.max(0, (run.endsAt - Date.now()) / 1000)); }; upd(); stageTick = setInterval(upd, 500); }
+      return h('div.qv.sp-view',
+        h('div.qv-head', h('span.qv-num', '🔒 ' + t('selfPaced')), timer, h('span.qv-answered', '✅ ' + t('nSubmitted', { n: sub }) + ' / ' + rows.length), h('span.qv-join', t('code') + ' ', h('b', getCode()))),
+        h('div.qv-text', run.quiz.title || t('liveQuiz')),
+        h('div.sp-grid', rows.length ? rows : h('p.muted', t('noParticipants'))));
+    }
+
+    // fixed scrambled order for an ordering question (the real order is never sent to phones)
+    function orderPerm(q) {
+      const P2 = (run.orderPerm = run.orderPerm || {});
+      if (P2[q.id]) return P2[q.id];
+      const a = q.options.map((_, i) => i);
+      for (let k = 0; k < 20 && a.every((x, i) => x === i); k++) for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+      return (P2[q.id] = a);
+    }
+    /** Mark one answer (shared by live and self-paced quizzes). flat = no speed bonus. */
+    function grade(q, v, at, flat) {
+      const a = { v, at };
+      const pts = () => (flat ? (q.scoring === 'manual' ? 0 : q.points == null ? 1000 : +q.points) : autoScore(q, at));
+      if (q.type === 'open') a.v = String(v || '').trim().slice(0, 500);
+      if (q.type === 'scale') a.v = H.clamp(parseInt(v, 10) || 0, 1, q.scaleMax || 5);
+      if (['mcq', 'tf', 'poll'].includes(q.type)) a.v = parseInt(v, 10);
+      if (q.type === 'order') {
+        // phones answer with positions in the scrambled list they were sent; map back to the real items
+        const perm = orderPerm(q), n = q.options.length;
+        const got = (Array.isArray(v) ? v : []).map((j) => perm[parseInt(j, 10)]);
+        if (got.length !== n || new Set(got).size !== n || got.some((x) => x == null)) return null;
+        a.v = got;
+        a.ok = got.every((x, i) => x === i);
+        a.score = a.ok ? pts() : 0;
+      }
+      if (['mcq', 'tf'].includes(q.type)) {
+        a.ok = a.v === q.correct;
+        a.score = a.ok ? pts() : 0;
+      } else if (q.type === 'open' && q.accept) {
+        const norm = (s) => String(s).toLowerCase().replace(/[^\p{L}\p{N} ]/gu, '').replace(/\s+/g, ' ').trim();
+        a.ok = String(q.accept).split(/[,;\n]/).map(norm).filter(Boolean).includes(norm(a.v));
+        a.score = a.ok ? pts() : 0;
+      }
+      return a;
     }
     function autoScore(q, at) {
       const pts = q.points == null ? 1000 : +q.points;
       if (q.scoring === 'manual') return 0;
       if (!(q.time > 0) || q.speedBonus === false) return pts;
       const el = (at - run.t0) / 1000;
-      return Math.round(pts * (1 - 0.5 * H.clamp(el / q.time, 0, 1)));
+      // speed bonus share: per question (Excel "Speed bonus") > per quiz setting > default 50%
+      const sp = q.speed != null && q.speed !== '' ? +q.speed : run.quiz.speed != null && run.quiz.speed !== '' ? +run.quiz.speed : 50;
+      return Math.round(pts * (1 - H.clamp(sp, 0, 100) / 100 * H.clamp(el / q.time, 0, 1)));
     }
     function manualScore(qid, pid, n) {
       const q = run.quiz.questions.find((x) => x.id === qid);
@@ -215,7 +406,22 @@
     function ranking() {
       return named().filter((p) => run ? Object.values(run.answers).some((A) => A[p.pid]) || Object.values(run.ideas).some((L) => L.some((i) => i.pid === p.pid)) || p.conns.size : true)
         .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
-        .map((p, i) => ({ pid: p.pid, name: p.name, emoji: emojiOf(p.pid), score: p.score, correct: p.correct, incorrect: p.incorrect, rank: i + 1 }));
+        .map((p, i) => ({ pid: p.pid, name: p.name, emoji: emojiOf(p.pid), score: p.score, correct: p.correct, incorrect: p.incorrect, rank: i + 1, team: run && run.teams ? p.team : undefined }));
+    }
+    // ---- team mode (optional): team score = average of its members' scores ----
+    const TEAM = ['🔴', '🔵', '🟢', '🟡', '🟣', '🟠'];
+    const teamLabel = (k) => TEAM[k] + ' ' + t('team') + ' ' + (k + 1);
+    function assignTeam(p) {
+      if (!run || !run.teams || !p.name || p.team != null) return;
+      const sizes = Array.from({ length: run.teams }, (_, k) => named().filter((x) => x.team === k).length);
+      p.team = sizes.indexOf(Math.min(...sizes));
+    }
+    function teamRanking() {
+      if (!run || !run.teams) return null;
+      return Array.from({ length: run.teams }, (_, k) => {
+        const m = named().filter((p) => p.team === k);
+        return { k, label: teamLabel(k), members: m.length, score: m.length ? Math.round(m.reduce((s, p) => s + p.score, 0) / m.length) : 0 };
+      }).sort((a, b) => b.score - a.score);
     }
     function counts(q) {
       const A = run.answers[q.id] || {};
@@ -268,14 +474,18 @@
           if (!a) return null;
           let shown = a.v;
           if (['mcq', 'tf', 'poll'].includes(q.type)) shown = q.options[a.v] ? q.options[a.v].text : '';
+          if (q.type === 'order') shown = a.v.map((k) => (q.options[k] || {}).text).join(' → ');
           if (Array.isArray(shown)) shown = shown.join(', ');
-          return { v: shown, ok: a.ok, score: a.score || 0, manual: a.manual };
+          return { v: shown, ok: a.ok, score: a.score || 0, manual: a.manual, time: a.time != null ? Math.round(a.time * 10) / 10 : run.qT0 && run.qT0[q.id] ? Math.round((a.at - run.qT0[q.id]) / 100) / 10 : null, away: run.away && run.away[q.id] && run.away[q.id][r.pid] || 0 };
         }),
+        away: run.away ? qs.reduce((n, q) => n + (run.away[q.id] && run.away[q.id][r.pid] || 0), 0) : 0,
+        team: run.teams && r.team != null ? teamLabel(r.team) : undefined,
       }));
       const res = {
-        id: 'r_' + H.uid(), kind: 'quiz', at: Date.now(), title: run.quiz.title || t('liveQuiz'), subject: run.subject, lesson: lesson.title,
+        id: 'r_' + H.uid(), kind: 'quiz', at: Date.now(), title: run.quiz.title || t('liveQuiz'), subject: run.subject, lesson: lesson.title, teams: teamRanking() || undefined,
         questions: qs.map((q) => {
           const o = { id: q.id, type: q.type, text: q.text, options: (q.options || []).map((x) => x.text), correct: q.correct, points: q.points, source: q.source };
+          if (q.type === 'order') { const A = Object.values(run.answers[q.id] || {}); o.correctOrder = q.options.map((x) => x.text).join(' → '); o.pctRight = A.length ? Math.round(A.filter((x) => x.ok).length / A.length * 100) : 0; }
           if (['mcq', 'tf', 'poll', 'scale'].includes(q.type)) { const c = counts(q); o.counts = c.c; o.avg = c.avg; }
           if (q.type === 'cloud') o.words = cloudWords(q).map((w) => w.w + ' (' + w.n + ')');
           if (q.type === 'ideas') o.ideas = ideasSorted(q).map((i) => ({ text: i.text, by: nameOf(i.pid), reactions: Object.keys(i.reacts).length, comments: i.comments.map((c) => nameOf(c.pid) + ': ' + c.text) }));
@@ -298,9 +508,10 @@
       const p = P[pid];
       const rk = run ? ranking() : [];
       const me = rk.find((r) => r.pid === pid);
+      const hideScores = !!(run && run.exam && run.phase !== 'done');
       const st = {
         t: 'aud', code: getCode(),
-        you: p ? { name: p.name, emoji: p.emoji, score: p.score, rank: me ? me.rank : null, hand: p.hand, pace: p.pace, picked: pickedPid === pid } : null,
+        you: p ? { team: run && run.teams && p.team != null ? teamLabel(p.team) : null, name: p.name, emoji: p.emoji, score: hideScores ? null : p.score, rank: hideScores ? null : me ? me.rank : null, hand: p.hand, pace: p.pace, picked: pickedPid === pid } : null,
         qna: { open: qnaOpen, list: qna.slice().sort((a, b) => b.votes.size - a.votes.size || b.at - a.at).slice(0, 60).map((q) => ({ id: q.id, text: q.text, votes: q.votes.size, voted: q.votes.has(pid), answered: q.answered, mine: q.pid === pid })) },
         bank: { open: bankOpen, max: bankMax, mine: bank.filter((b) => b.pid === pid).map((b) => ({ text: b.q.text, type: b.q.type })) },
         quiz: null,
@@ -308,19 +519,37 @@
       if (run) {
         const q = curQ();
         const qz = { phase: run.phase, qi: run.qi, n: run.quiz.questions.length, title: run.quiz.title };
+        if (run.phase === 'self') { qz.exam = true; qz.self = spState(pid); }
         if (q && run.phase !== 'lobby') {
-          qz.q = { id: q.id, type: q.type, text: q.text, image: q.image || '', options: (q.options || []).map((o) => ({ text: o.text, image: o.image || '' })), time: q.time || 0, left: timeLeft(q), points: q.points, scaleMax: q.scaleMax || 5, maxPer: q.maxPer || 3, scaleLabels: q.scaleLabels || '' };
+          qz.q = { id: q.id, type: q.type, text: q.text, image: q.image || '', options: (q.type === 'order' ? orderPerm(q).map((k) => q.options[k]) : q.options || []).map((o) => ({ text: o.text, image: o.image || '' })), time: q.time || 0, left: timeLeft(q), points: q.points, scaleMax: q.scaleMax || 5, maxPer: q.maxPer || 3, scaleLabels: q.scaleLabels || '' };
           const a = (run.answers[q.id] || {})[pid];
-          qz.my = a ? { v: a.v, ok: run.phase === 'q' ? undefined : a.ok, score: run.phase === 'q' ? undefined : a.score } : null;
-          if (run.phase !== 'q') {
+          qz.my = a ? { v: a.v, ok: run.phase === 'q' ? undefined : a.ok, score: run.phase === 'q' ? undefined : a.score, streak: run.phase === 'q' ? undefined : a.streak } : null;
+          if (run.exam) {
+            qz.exam = true;
+            // shuffle unless the teacher fixed the order or an option refers to the others ("All of the above")
+            if (q.type === 'mcq' && !q.fixedOrder && !(q.options || []).some((o) => /\b(all|none|both|neither) of the above\b|^(both|neither)\b/i.test(o.text || ''))) qz.q.shuffle = true;
+            if (a) qz.my = { v: a.v };
+          } else if (run.phase !== 'q') {
             qz.reveal = { correct: q.correct, source: q.source || '' };
+            if (q.type === 'order') qz.reveal.order = q.options.map((o) => o.text);
             if (['mcq', 'tf', 'poll', 'scale'].includes(q.type)) Object.assign(qz.reveal, counts(q));
           }
           if (q.type === 'ideas') {
             qz.ideas = ideasSorted(q).map((i) => ({ id: i.id, text: i.text, by: nameOf(i.pid), emoji: emojiOf(i.pid), mine: i.pid === pid, reacts: Object.keys(i.reacts).length, myReact: i.reacts[pid] || null, comments: i.comments.slice(-8).map((c) => ({ by: nameOf(c.pid), text: c.text })) }));
           }
         }
-        if (run.phase === 'board' || run.phase === 'done') qz.board = rk.slice(0, 10).map((r) => ({ name: r.name, emoji: r.emoji, score: r.score }));
+        if (run.phase === 'board' || run.phase === 'done') { qz.board = rk.slice(0, 10).map((r) => ({ name: r.name, emoji: r.emoji, score: r.score })); qz.teams = teamRanking(); }
+        if (run.exam && run.phase === 'done') {
+          qz.exam = true;
+          qz.review = run.quiz.questions.map((x) => {
+            const a = (run.answers[x.id] || {})[pid];
+            const opt = (i) => (x.options && x.options[i] ? x.options[i].text : null);
+            let mine = null;
+            if (a) mine = ['mcq', 'tf', 'poll'].includes(x.type) ? opt(a.v) : x.type === 'order' ? a.v.map(opt).join(' → ') : Array.isArray(a.v) ? a.v.join(', ') : String(a.v);
+            return { text: x.text, type: x.type, mine, ok: a ? (a.ok == null ? null : !!a.ok) : (isScored(x) ? false : null), score: a ? a.score || 0 : 0,
+              correct: ['mcq', 'tf'].includes(x.type) ? opt(x.correct) : x.type === 'order' ? x.options.map((o) => o.text).join(' → ') : x.type === 'open' && x.accept ? String(x.accept) : null, source: x.source || '' };
+          });
+        }
         st.quiz = qz;
       }
       return st;
@@ -365,14 +594,17 @@
       return h('div.quiz-bar',
         h('span.qb-info', run.phase === 'lobby' ? t('nJoined', { n: named().length }) : q ? `${t('question')} ${run.qi + 1}/${run.quiz.questions.length} · ${t('nAnswered', { n: q.type === 'ideas' ? (run.ideas[q.id] || []).length : A })}` : ''),
         run.phase === 'lobby' ? b('▶ ' + t('beginQuiz'), nextQ, 'primary') : null,
-        run.phase === 'q' && q.type !== 'ideas' ? b('👁 ' + t('revealNow'), reveal, 'primary') : null,
-        run.phase === 'q' && q.type === 'ideas' ? b('✓ ' + t('closeIdeas'), reveal, 'primary') : null,
+        run.phase === 'self' ? b('⏹ ' + t('collectNow'), async () => { if (await H.confirm(t('collectNow'), t('collectNowTxt'))) finish(); }, 'primary') : null,
+        run.exam && run.phase === 'q' ? b('⏭ ' + t('nextQ'), reveal, 'primary') : null,
+        !run.exam && run.phase === 'q' && q.type !== 'ideas' ? b('👁 ' + t('revealNow'), reveal, 'primary') : null,
+        !run.exam && run.phase === 'q' && q.type === 'ideas' ? b('✓ ' + t('closeIdeas'), reveal, 'primary') : null,
         run.phase === 'reveal' ? b('🏆 ' + t('leaderboard'), board) : null,
         run.phase === 'reveal' && ['open', 'cloud', 'ideas'].includes(q.type) ? b('🎲 ' + t('spotlightAnswer'), spotlightAnswer) : null,
         (run.phase === 'reveal' || run.phase === 'board') ? b((run.qi + 1 >= run.quiz.questions.length ? '🏁 ' + t('finish') : '⏭ ' + t('nextQ')), nextQ, 'primary') : null,
         run.phase === 'done' ? b('⬇ Excel', () => H.exports.resultsXlsx(run.result)) : null,
         run.phase === 'done' ? b('⬇ PDF', () => H.exports.resultsPdf(run.result)) : null,
-        b(run.confetti ? '🎊' : '🚫🎊', () => { run.confetti = !run.confetti; changed(); }, 'ghost'),
+        run.phase === 'done' ? b('👤 ' + t('studentReports'), () => H.exports.studentReports(run.result)) : null,
+        run.exam ? h('span.qb-info', '🔒 ' + t('examMode')) : b(run.confetti ? '🎊' : '🚫🎊', () => { run.confetti = !run.confetti; changed(); }, 'ghost'),
         b('📋', openQuiz, 'ghost'),
         b('🏠', () => { stageMode = null; changed(); }, 'ghost'),
         b('✕ ' + t('endQuiz'), async () => { if (await H.confirm(t('endQuiz'), t('endQuizTxt'))) endQuiz(); }, 'danger'));
@@ -381,6 +613,8 @@
       const q = curQ();
       if (run.phase === 'lobby') return joinView(true);
       if (run.phase === 'board' || run.phase === 'done') return boardView(run.phase === 'done');
+      if (run.phase === 'self') return selfView();
+      if (run.phase === 'gap') return h('div.qv.qv-gap', h('div.qv-head', h('span.qv-num', `${run.qi + 1}/${run.quiz.questions.length}`)), h('div.qv-text', run.qi + 1 >= run.quiz.questions.length ? '🏁' : '⏭ ' + t('nextComing')));
       const box = h('div.qv');
       const head = h('div.qv-head', h('span.qv-num', `${run.qi + 1}/${run.quiz.questions.length}`), h('span.qv-type', t('qt_' + q.type)));
       const tl = timeLeft(q);
@@ -397,7 +631,7 @@
       if (q.image) box.appendChild(h('img.qv-img', { src: q.image, alt: '' }));
       const shownJoin = h('div.qv-join', t('code') + ' ', h('b', getCode()));
       box.appendChild(shownJoin);
-      if (['mcq', 'tf', 'poll'].includes(q.type)) {
+      if (run.exam) { /* exam: question, timer and answered count only */ } else if (['mcq', 'tf', 'poll'].includes(q.type)) {
         const rev = run.phase === 'reveal';
         const c = rev ? counts(q) : null;
         const max = c ? Math.max(1, ...c.c) : 1;
@@ -411,6 +645,12 @@
             rev ? h('b.qv-cnt', String(c.c[i])) : null,
             good ? h('span.qv-check', '✓') : null);
         })));
+      } else if (q.type === 'order') {
+        const rev = run.phase === 'reveal';
+        const A = Object.values(run.answers[q.id] || {});
+        const items = rev ? q.options.map((o, k) => ({ o, k })) : orderPerm(q).map((k) => ({ o: q.options[k], k }));
+        box.appendChild(h('div.order-view' + (rev ? '.rev' : ''), items.map(({ o }, i) => h('div.order-item', h('b', rev ? String(i + 1) : '•'), h('span', o.text)))));
+        if (rev) box.appendChild(h('div.scale-avg', '✅ ' + (A.length ? Math.round(A.filter((x) => x.ok).length / A.length * 100) : 0) + '%'));
       } else if (q.type === 'scale') {
         const n = q.scaleMax || 5;
         const rev = run.phase === 'reveal';
@@ -445,8 +685,10 @@
       const rk = ranking();
       const top = rk.slice(0, 3);
       const order = [top[1], top[0], top[2]];
+      const tr = teamRanking();
       return h('div.board-view',
         h('h1', final ? '🏁 ' + t('quizFinished') : '🏆 ' + t('leaderboard')),
+        tr ? h('div.team-board', tr.map((x, i) => h('div.team-row' + (i === 0 ? '.first' : ''), h('b', x.label), h('span.muted', ' · ' + x.members + ' 👥'), h('b.team-score', String(x.score))))) : null,
         h('div.podium', order.map((r, i) => r ? h('div.pod.p' + ([2, 1, 3][i]), h('div.pod-emoji', r.emoji), h('div.pod-name', r.name), h('div.pod-score', String(r.score)), h('div.pod-block', String([2, 1, 3][i]))) : h('div.pod.empty'))),
         h('ol.board-list', { start: 4 }, rk.slice(3, 10).map((r) => h('li', h('span', r.emoji + ' ' + r.name), h('b', String(r.score))))),
         !rk.length ? h('p.muted', t('noParticipants')) : null);
@@ -472,6 +714,15 @@
       const p = P[pickedPid];
       return h('div.pick-view', h('div.pick-card', h('div.pick-emoji', p ? emojiOf(p.pid) : '🎲'), h('div.pick-name', p ? p.name : '…')),
         h('div.row.center', h('button.btn.primary', { on: { click: pick } }, '🎲 ' + t('pickAgain'))));
+    }
+
+    function kick(pid) {
+      kicked.add(pid);
+      net.conns.forEach((c) => { if (connPid.get(c.connectionId) === pid) { net.send(c, { t: 'kicked' }); setTimeout(() => { try { c.close(); } catch (e) { /* ignore */ } }, 400); } });
+      delete P[pid];
+      qna.forEach((q) => q.votes.delete(pid));
+      if (pickedPid === pid) pickedPid = null;
+      changed();
     }
 
     // ---------------- random picker ----------------
@@ -535,12 +786,13 @@
           h('div.row', h('b', run.quiz.title || t('liveQuiz')), h('span.muted', ` · ${t('phase_' + run.phase)} · ${t('nJoined', { n: named().length })}`)),
           h('div.row.wrap',
             run.phase === 'lobby' ? h('button.btn.primary', { on: { click: () => { stageMode = 'quiz'; nextQ(); } } }, '▶ ' + t('beginQuiz')) : null,
-            run.phase === 'q' ? h('button.btn.primary', { on: { click: reveal } }, '👁 ' + t('revealNow')) : null,
+            run.phase === 'q' ? h('button.btn.primary', { on: { click: reveal } }, run.exam ? '⏭ ' + t('nextQ') : '👁 ' + t('revealNow')) : null,
             ['reveal', 'board'].includes(run.phase) ? h('button.btn.primary', { on: { click: nextQ } }, '⏭ ' + t('nextQ')) : null,
             run.phase === 'reveal' ? h('button.btn', { on: { click: board } }, '🏆 ' + t('leaderboard')) : null,
             h('button.btn.ghost', { on: { click: () => { stageMode = 'quiz'; changed(); } } }, '📺 ' + t('showOnScreen')),
             run.phase === 'done' ? h('button.btn', { on: { click: () => H.exports.resultsXlsx(run.result) } }, '⬇ Excel') : null,
             run.phase === 'done' ? h('button.btn', { on: { click: () => H.exports.resultsPdf(run.result) } }, '⬇ PDF') : null,
+            run.phase === 'done' ? h('button.btn', { on: { click: () => H.exports.studentReports(run.result) } }, '👤 ' + t('studentReports')) : null,
             h('button.btn.danger', { on: { click: endQuiz } }, '✕ ' + t('endQuiz'))),
           q && q.type === 'open' ? manualList(q) : null,
           q && q.type === 'ideas' ? ideaScoreList(q) : null);
@@ -608,12 +860,14 @@
         h('div.row.wrap',
           h('button.btn.sm', { on: { click: () => H.exports.attendanceXlsx({ title: (lesson.title || '') + ' — ' + t('attendance'), at: sessionStart, people: named().map((p) => ({ name: p.name, emoji: emojiOf(p.pid), joinedAt: p.joinedAt, lastSeen: p.lastSeen, online: !!p.conns.size })) }) } }, '⬇ ' + t('attendance') + ' (Excel)'),
           h('button.btn.ghost.sm', { on: { click: () => { Object.values(P).forEach((p) => { p.hand = false; }); changed(); } } }, '✋ ' + t('lowerHands')),
-          h('button.btn.ghost.sm', { on: { click: () => { Object.values(P).forEach((p) => { p.pace = null; }); changed(); } } }, t('resetPace'))),
+          h('button.btn.ghost.sm', { on: { click: () => { Object.values(P).forEach((p) => { p.pace = null; }); changed(); } } }, t('resetPace')),
+          h('label.check', h('input', { type: 'checkbox', checked: roomLocked, on: { change: (e) => { roomLocked = e.target.checked; changed(); } } }), ' 🔐 ', t('lockRoom'), h('span.muted.sm', ' (' + t('lockRoomHint') + ')'))),
         h('table.people', h('tr', h('th', ''), h('th', t('name')), h('th', t('joined')), h('th', t('score')), h('th', '')),
           ps.map((p) => h('tr' + (p.conns.size ? '' : '.off'),
             h('td', emojiOf(p.pid)), h('td', p.name || '—'), h('td', new Date(p.joinedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })),
-            h('td', String(p.score || 0)),
-            h('td', (p.hand ? '✋ ' : '') + (p.pace === 'lost' ? '😵 ' : p.pace === 'fast' ? '🐢 ' : '') + (p.conns.size ? '🟢' : '⚪'))))));
+            h('td', String(p.score || 0) + (p.away ? ' ⚠️' + p.away : '')),
+            h('td', (p.hand ? '✋ ' : '') + (p.pace === 'lost' ? '😵 ' : p.pace === 'fast' ? '🐢 ' : '') + (p.conns.size ? '🟢' : '⚪')),
+            h('td', h('button.btn.ghost.sm.danger', { title: t('kick'), on: { click: async () => { if (await H.confirm(t('kick'), t('kickConfirm', { name: p.name || '—' }), true)) kick(p.pid); } } }, '✕'))))));
       return body;
     }
 
@@ -631,6 +885,7 @@
         case 'reveal': reveal(); return;
         case 'board': board(); return;
         case 'end': endQuiz(); return;
+        case 'collect': if (run && run.phase === 'self') finish(); return;
         case 'showQuiz': stageMode = 'quiz'; break;
         case 'spotlight': spotlightAnswer(); return;
         case 'confetti': H.confetti(stage, 120); return;
@@ -652,7 +907,7 @@
         lost: sig.lost, fast: sig.fast, stage: stageMode, reactions: reactOn,
         qna: qna.filter((x) => !x.answered).sort((a, b) => b.votes.size - a.votes.size).slice(0, 20).map((x) => ({ id: x.id, text: x.text, votes: x.votes.size })),
         quizzes: quizList,
-        quiz: run ? { title: run.quiz.title, phase: run.phase, qi: run.qi, n: run.quiz.questions.length, text: q ? q.text : '', type: q ? q.type : '', answered: q ? (q.type === 'ideas' ? (run.ideas[q.id] || []).length : Object.keys(run.answers[q.id] || {}).length) : 0 } : null,
+        quiz: run ? { title: run.quiz.title, exam: !!run.exam, phase: run.phase, qi: run.qi, n: run.quiz.questions.length, text: q ? q.text : '', type: q ? q.type : '', answered: run.phase === 'self' ? Object.values(run.sp || {}).filter((x) => x.submitted).length : q ? (q.type === 'ideas' ? (run.ideas[q.id] || []).length : Object.keys(run.answers[q.id] || {}).length) : 0 } : null,
       };
     }
     function signals() {
@@ -670,7 +925,7 @@
       showJoin: () => { stageMode = 'join'; changed(); },
       toggleReactions: () => { reactOn = !reactOn; H.settings.set('showReactions', reactOn); changed(); },
       reactionsOn: () => reactOn,
-      destroy() { document.body.classList.remove('live-on'); clearInterval(tickAll); clearInterval(stageTick); if (run && run.qi >= 0) saveResults(); saveAttendance(); stage.remove(); reactLayer.remove(); },
+      destroy() { document.body.classList.remove('live-on'); clearInterval(tickAll); clearInterval(stageTick); if (run) clearInterval(run.spTick); if (run && (run.qi >= 0 || run.phase === 'self')) saveResults(); saveAttendance(); stage.remove(); reactLayer.remove(); },
     };
   };
 })(window.Hub);

@@ -2,13 +2,13 @@
 (function (H) {
   'use strict';
   const { h, t } = H;
-  const TYPES = ['mcq', 'tf', 'poll', 'open', 'cloud', 'ideas', 'scale'];
-  const TYPE_ICON = { mcq: '🔘', tf: '✅', poll: '📊', open: '✍️', cloud: '☁️', ideas: '💡', scale: '🎚️' };
+  const TYPES = ['mcq', 'tf', 'poll', 'open', 'order', 'cloud', 'ideas', 'scale'];
+  const TYPE_ICON = { mcq: '🔘', tf: '✅', poll: '📊', open: '✍️', order: '🔢', cloud: '☁️', ideas: '💡', scale: '🎚️' };
 
   H.quizNew = () => ({ id: 'z_' + H.uid(), title: '', subject: '', questions: [], created: Date.now(), updated: Date.now() });
   const blankQ = (type = 'mcq') => ({
     id: 'q_' + H.uid(6), type, text: '', image: '',
-    options: type === 'tf' ? [{ text: t('true') }, { text: t('false') }] : ['mcq', 'poll'].includes(type) ? [{ text: '' }, { text: '' }, { text: '' }, { text: '' }] : [],
+    options: type === 'tf' ? [{ text: t('true') }, { text: t('false') }] : ['mcq', 'poll', 'order'].includes(type) ? [{ text: '' }, { text: '' }, { text: '' }, { text: '' }] : [],
     correct: 0, time: type === 'ideas' ? 0 : H.settings.get('defaultTime', 30), points: ['poll', 'cloud', 'scale'].includes(type) ? 0 : H.settings.get('defaultPoints', 1000),
     scoring: 'auto', speedBonus: true, source: '', accept: '', maxPer: 3, scaleMax: 5, scaleLabels: '',
   });
@@ -66,7 +66,7 @@
       const typeRow = h('div.chips', TYPES.map((ty) => h('button.chip' + (q.type === ty ? '.on' : ''), { on: { click: () => {
         const keep = q.text;
         form = Object.assign(blankQ(ty), { text: keep, id: q.id, image: q.image, source: q.source });
-        if (['mcq', 'poll'].includes(ty) && ['mcq', 'poll'].includes(q.type)) form.options = q.options;
+        if (['mcq', 'poll', 'order'].includes(ty) && ['mcq', 'poll', 'order'].includes(q.type)) form.options = q.options;
         renderForm();
       } } }, TYPE_ICON[ty] + ' ' + t('qt_' + ty))));
       const text = h('textarea.input', { rows: 2, placeholder: t('askQuestionPh'), value: q.text });
@@ -74,7 +74,7 @@
       formBox.append(h('div.lbl', t('questionType')), typeRow, h('p.hint', t('qh_' + q.type)), h('div.lbl', t('question')), text,
         h('details.more', h('summary', '🖼 ' + t('addImage')), imagePicker(() => q.image, (v) => { q.image = v; })));
 
-      if (['mcq', 'poll', 'tf'].includes(q.type)) {
+      if (['mcq', 'poll', 'tf', 'order'].includes(q.type)) {
         const opts = h('div.opts');
         const draw = () => {
           opts.innerHTML = '';
@@ -82,7 +82,7 @@
             const inp = h('input.input', { value: o.text, placeholder: t('optionN', { n: i + 1 }), readOnly: q.type === 'tf' });
             inp.addEventListener('input', () => { o.text = inp.value; });
             opts.appendChild(h('div.opt-row', { style: { '--c': H.live.TILE[i % 8] } },
-              q.type !== 'poll' ? h('button.radio' + (q.correct === i ? '.on' : ''), { title: t('markCorrect'), on: { click: () => { q.correct = i; draw(); } } }, q.correct === i ? '✓' : '') : h('span.opt-shape', H.live.SHAPES[i % 8]),
+              q.type === 'order' ? h('span.opt-shape.order-n', String(i + 1)) : q.type !== 'poll' ? h('button.radio' + (q.correct === i ? '.on' : ''), { title: t('markCorrect'), on: { click: () => { q.correct = i; draw(); } } }, q.correct === i ? '✓' : '') : h('span.opt-shape', H.live.SHAPES[i % 8]),
               inp,
               q.type !== 'tf' ? h('details.opt-img', h('summary', '🖼'), imagePicker(() => o.image, (v) => { o.image = v; })) : null,
               q.type !== 'tf' && q.options.length > 2 ? h('button.icon-btn', { on: { click: () => { q.options.splice(i, 1); if (q.correct >= q.options.length) q.correct = 0; draw(); } } }, '✕') : null));
@@ -90,7 +90,8 @@
           if (q.type !== 'tf' && q.options.length < 8) opts.appendChild(h('button.btn.ghost.sm', { on: { click: () => { q.options.push({ text: '' }); draw(); } } }, '+ ' + t('addOption')));
         };
         draw();
-        formBox.append(h('div.lbl', t('answers')), q.type !== 'poll' ? h('p.hint', t('correctMark')) : null, opts);
+        formBox.append(h('div.lbl', t('answers')), q.type === 'order' ? h('p.hint', t('orderHint')) : q.type !== 'poll' ? h('p.hint', t('correctMark')) : null, opts,
+          q.type === 'mcq' ? h('label.check', h('input', { type: 'checkbox', checked: !!q.fixedOrder, on: { change: (e) => { q.fixedOrder = e.target.checked; } } }), ' ', t('keepOrder')) : null);
       }
       if (q.type === 'open') {
         const acc = h('input.input', { value: q.accept || '', placeholder: t('acceptPh') });
@@ -116,7 +117,7 @@
       const pts = h('input.input.num', { type: 'number', min: 0, max: 10000, step: 50, value: q.points || 0 });
       pts.addEventListener('input', () => { q.points = +pts.value || 0; });
       const scoreRow = [];
-      if (['mcq', 'tf', 'open'].includes(q.type) || q.type === 'ideas') {
+      if (['mcq', 'tf', 'open', 'order'].includes(q.type) || q.type === 'ideas') {
         const sc = h('select.input',
           h('option', { value: 'auto', selected: q.scoring !== 'manual' && q.speedBonus !== false }, '🤖 ' + t('autoSpeed')),
           h('option', { value: 'flat', selected: q.scoring !== 'manual' && q.speedBonus === false }, '🤖 ' + t('autoFlat')),
@@ -134,7 +135,7 @@
 
       const add = h('button.btn.primary', { on: { click: () => {
         if (!q.text.trim()) { H.toast(t('needText'), 'err'); text.focus(); return; }
-        if (['mcq', 'poll'].includes(q.type)) {
+        if (['mcq', 'poll', 'order'].includes(q.type)) {
           q.options = q.options.filter((o) => o.text.trim() || o.image);
           if (q.options.length < 2) { H.toast(t('needOptions'), 'err'); renderForm(); return; }
           if (q.correct >= q.options.length) q.correct = 0;
@@ -155,6 +156,39 @@
           h('button.btn.sm', { on: { click: () => { form = Object.assign(blankQ(x.q.type), JSON.parse(JSON.stringify(x.q)), { id: 'q_' + H.uid(6) }); editing = -1; renderForm(); } } }, t('use')))));
     }
 
+    // All quiz-level options live in one collapsed panel so the builder stays simple.
+    function settingsPanel() {
+      const badges = h('span.qs-badges');
+      const sub = h('div.qs-sub');
+      const refresh = () => {
+        const on = [quiz.exam || quiz.selfPaced ? '🔒 ' + t('examMode') : null, quiz.selfPaced ? '🚶 ' + t('selfPaced') : null,
+          quiz.speed === 0 ? '⚡ ' + t('speedOff') : quiz.speed === 100 ? '⚡ 100%' : null, quiz.streak ? '🔥 ' + t('streakBonus') : null, +quiz.teams ? '👥 ' + quiz.teams : null].filter(Boolean);
+        badges.textContent = on.length ? on.join(' · ') : t('defaultsHint');
+        sub.hidden = !quiz.selfPaced;
+      };
+      const chk = (key, label, hint, after) => h('label.check', h('input', { type: 'checkbox', checked: !!quiz[key], on: { change: (e) => { quiz[key] = e.target.checked || undefined; after && after(); refresh(); } } }), ' ', h('b', label), hint ? h('span.muted.sm', ' — ' + hint) : null);
+      const total = h('input.input.num', { type: 'number', min: 0, max: 300, value: quiz.totalTime || '', placeholder: t('auto') });
+      total.addEventListener('input', () => { quiz.totalTime = +total.value || undefined; });
+      sub.append(
+        chk('shuffleQ', t('shuffleQ'), t('shuffleQHint')),
+        chk('noBack', t('noBack'), t('noBackHint')),
+        h('div.row.wrap', h('span', '⏱ ' + t('totalTime')), total, h('span.muted.sm', t('totalTimeHint'))));
+      const panel = h('details.qs', { open: !!(quiz.exam || quiz.selfPaced || quiz.speed != null || quiz.streak || +quiz.teams) },
+        h('summary', h('b', '⚙ ' + t('quizSettings')), ' ', badges),
+        h('div.qs-body',
+          chk('exam', '🔒 ' + t('examMode'), t('examModeHint')),
+          chk('selfPaced', '🚶 ' + t('selfPaced'), t('selfPacedHint')),
+          sub,
+          h('div.row.wrap.quiz-opts',
+            h('span', '⚡ ' + t('speedBonus')),
+            h('select.input.num.speed-sel', { on: { change: (e) => { quiz.speed = e.target.value === '' ? undefined : +e.target.value; refresh(); } } },
+              [['', t('speed50')], ['0', t('speedOff')], ['100', t('speed100')]].map(([v, l]) => h('option', { value: v, selected: String(quiz.speed == null || quiz.speed === 50 ? '' : quiz.speed) === v }, l))),
+            h('span', '👥 ' + t('teams')),
+            h('select.input.num.speed-sel', { on: { change: (e) => { quiz.teams = +e.target.value || undefined; refresh(); } } }, [0, 2, 3, 4, 5, 6].map((n) => h('option', { value: n, selected: (+quiz.teams || 0) === n }, n ? String(n) : t('teamsOff'))))),
+          chk('streak', '🔥 ' + t('streakBonus'), t('streakHint'))));
+      refresh();
+      return panel;
+    }
     const saveBtn = h('button.btn', { on: { click: async () => {
       if (!quiz.title.trim()) quiz.title = t('quiz') + ' ' + new Date().toLocaleDateString();
       quiz.updated = Date.now();
@@ -171,6 +205,7 @@
     root.innerHTML = '';
     root.append(
       h('div.grid2', h('div', h('div.lbl', t('quizTitle')), titleIn), h('div', h('div.lbl', t('subjectLbl')), subjIn)),
+      settingsPanel(),
       h('div.lbl', t('questions')), listBox,
       bankList(),
       h('div.q-form-wrap', h('h4', editing >= 0 ? t('editQuestion') : t('addQuestion')), formBox),
@@ -194,7 +229,7 @@
 
   // ---------------- Excel import / export ----------------
   const COLS = ['Type', 'Question', 'Option A', 'Option B', 'Option C', 'Option D', 'Option E', 'Option F', 'Correct', 'Time (s)', 'Points', 'Accepted answers', 'Source'];
-  const TYPE_NAMES = { mcq: 'MCQ', tf: 'TF', poll: 'Poll', open: 'Open', cloud: 'Cloud', ideas: 'Ideas', scale: 'Scale' };
+  const TYPE_NAMES = { mcq: 'MCQ', tf: 'TF', poll: 'Poll', open: 'Open', order: 'Order', cloud: 'Cloud', ideas: 'Ideas', scale: 'Scale' };
   H.quizIO = {
     async template() {
       const X = await H.need.xlsx();
@@ -210,11 +245,13 @@
       const ws = X.utils.aoa_to_sheet(rows);
       ws['!cols'] = COLS.map((c, i) => ({ wch: i === 1 ? 50 : i === 11 ? 30 : 14 }));
       const help = X.utils.aoa_to_sheet([['How to fill this sheet'],
-        ['Type: MCQ (multiple choice), TF (True/False), Poll, Open (typed answer), Cloud (word cloud), Ideas (idea wall), Scale (rating 1–5)'],
+        ['Type: MCQ (multiple choice), TF (True/False), Poll, Open (typed answer), Order (put in order — write the options A, B, C… in the CORRECT order), Cloud (word cloud), Ideas (idea wall), Scale (rating 1–5)'],
         ['Correct: the letter of the right option (A, B, C…). For TF use A = True, B = False.'],
         ['Time: seconds (0 = no limit). Points: how much a correct answer is worth (speed bonus applies).'],
         ['Accepted answers (Open only): comma-separated answers that are marked right automatically.'],
-        ['Sheet name becomes the quiz title. You can put several quizzes in one file (one per sheet).']]);
+        ['Sheet name becomes the quiz title. You can put several quizzes in one file (one per sheet).'],
+        ['Optional extra column "Speed bonus" (off, 50 or 100): how much of the points depend on answering fast. Leave it out to keep the default (50).'],
+        ['Exam mode: add "(exam)" to the sheet name, e.g. "Unit 2 (exam)". Answers stay hidden until the end, questions advance automatically and options are shuffled. ("[exam]" also works in files from Google Sheets.)']]);
       const wb = X.utils.book_new();
       X.utils.book_append_sheet(wb, ws, 'My quiz');
       X.utils.book_append_sheet(wb, help, 'Help');
@@ -230,17 +267,19 @@
         if (!rows.length) continue;
         const head = rows[0].map((x) => String(x).toLowerCase());
         const col = (re, d) => { const i = head.findIndex((x) => re.test(x)); return i >= 0 ? i : d; };
-        const cT = col(/^type/, 0), cQ = col(/question/, 1), cC = col(/correct|answer$/, 8), cTime = col(/time/, 9), cP = col(/point|worth/, 10), cA = col(/accept/, 11), cS = col(/source/, 12);
+        const cT = col(/^type/, 0), cQ = col(/question/, 1), cC = col(/correct|answer$/, 8), cTime = col(/time/, 9), cP = col(/point|worth/, 10), cA = col(/accept/, 11), cS = col(/source/, 12), cSp = col(/speed/, -1);
         const optCols = head.map((x, i) => (/^option|^choice/.test(x) ? i : -1)).filter((i) => i >= 0);
         const qz = H.quizNew(); qz.title = name;
+        // "[exam]" (or "(exam)", since Excel doesn't allow [ ] in sheet names) in the sheet name switches on exam mode
+        if (/\[exam\]|\(exam\)/i.test(name)) { qz.exam = true; qz.title = name.replace(/\s*(\[exam\]|\(exam\))\s*/ig, ' ').trim() || 'Quiz'; }
         for (const r of rows.slice(1)) {
           const text = String(r[cQ] || '').trim();
           if (!text) continue;
           const tn = String(r[cT] || 'mcq').toLowerCase().replace(/[^a-z]/g, '');
-          const type = { mcq: 'mcq', multiplechoice: 'mcq', tf: 'tf', truefalse: 'tf', poll: 'poll', open: 'open', typed: 'open', cloud: 'cloud', wordcloud: 'cloud', ideas: 'ideas', idea: 'ideas', ideawall: 'ideas', scale: 'scale', rating: 'scale' }[tn] || 'mcq';
+          const type = { mcq: 'mcq', multiplechoice: 'mcq', tf: 'tf', truefalse: 'tf', poll: 'poll', open: 'open', typed: 'open', cloud: 'cloud', wordcloud: 'cloud', ideas: 'ideas', idea: 'ideas', ideawall: 'ideas', scale: 'scale', rating: 'scale', order: 'order', ordering: 'order', sequence: 'order', puzzle: 'order' }[tn] || 'mcq';
           const q = blankQ(type);
           q.text = text;
-          if (['mcq', 'poll'].includes(type)) q.options = (optCols.length ? optCols : [2, 3, 4, 5, 6, 7]).map((i) => ({ text: String(r[i] || '').trim() })).filter((o) => o.text);
+          if (['mcq', 'poll', 'order'].includes(type)) q.options = (optCols.length ? optCols : [2, 3, 4, 5, 6, 7]).map((i) => ({ text: String(r[i] || '').trim() })).filter((o) => o.text);
           const cor = String(r[cC] || '').trim();
           if (['mcq', 'tf'].includes(type) && cor) {
             const L = cor.toUpperCase().charCodeAt(0) - 65;
@@ -252,18 +291,30 @@
           if (r[cP] !== '' && r[cP] != null) q.points = parseInt(r[cP], 10) || 0;
           if (r[cA]) q.accept = String(r[cA]);
           if (r[cS]) q.source = String(r[cS]);
-          if (['mcq', 'poll'].includes(type) && q.options.length < 2) continue;
+          if (cSp >= 0 && String(r[cSp]).trim() !== '') { const sv = String(r[cSp]).trim().toLowerCase(); q.speed = /^(off|no|none|0)/.test(sv) ? 0 : H.clamp(parseInt(sv, 10) || 50, 0, 100); }
+          if (['mcq', 'poll', 'order'].includes(type) && q.options.length < 2) continue;
           qz.questions.push(q);
         }
         if (qz.questions.length) quizzes.push(qz);
       }
       return quizzes;
     },
+    /** Whole quiz (settings, images and all) as one file you can share or keep */
+    exportFile(q) {
+      const data = JSON.stringify({ app: 'lectern-quiz', v: 1, quiz: q }, null, 1);
+      H.download(new Blob([data], { type: 'application/json' }), (q.title || 'quiz').replace(/[^\p{L}\p{N}\- ]+/gu, '').trim() + '.lectern-quiz.json');
+    },
+    async parseFile(file) {
+      const d = JSON.parse(await file.text());
+      if (!d || d.app !== 'lectern-quiz' || !d.quiz || !Array.isArray(d.quiz.questions)) throw new Error(t('importNone'));
+      const qz = Object.assign(JSON.parse(JSON.stringify(d.quiz)), { id: 'z_' + H.uid(), updated: Date.now() });
+      return [qz];
+    },
     importDialog(done) {
-      const inp = h('input', { type: 'file', accept: '.xlsx,.xls,.csv,.ods', hidden: true });
+      const inp = h('input', { type: 'file', accept: '.xlsx,.xls,.csv,.ods,.json', hidden: true });
       inp.addEventListener('change', async () => {
         try {
-          const qs = await this.parse(inp.files[0]);
+          const qs = /\.json$/i.test(inp.files[0].name) ? await this.parseFile(inp.files[0]) : await this.parse(inp.files[0]);
           if (!qs.length) throw new Error(t('importNone'));
           for (const q of qs) await H.store.quizzes.put(q);
           H.toast(t('importedQuizzes', { n: qs.length, q: qs.reduce((a, b) => a + b.questions.length, 0) }), 'ok');
@@ -274,13 +325,14 @@
     },
     async exportQuiz(q) {
       const X = await H.need.xlsx();
-      const rows = [COLS].concat(q.questions.map((x) => {
+      const rows = [COLS.concat(['Speed bonus'])].concat(q.questions.map((x) => {
         const o = (x.options || []).map((y) => y.text);
         return [TYPE_NAMES[x.type], x.text, o[0] || '', o[1] || '', o[2] || '', o[3] || '', o[4] || '', o[5] || '',
-          ['mcq', 'tf'].includes(x.type) ? String.fromCharCode(65 + (x.correct || 0)) : '', x.time || 0, x.points || 0, x.accept || '', x.source || ''];
+          ['mcq', 'tf'].includes(x.type) ? String.fromCharCode(65 + (x.correct || 0)) : '', x.time || 0, x.points || 0, x.accept || '', x.source || '', x.speed != null ? x.speed : ''];
       }));
       const wb = X.utils.book_new();
-      X.utils.book_append_sheet(wb, X.utils.aoa_to_sheet(rows), (q.title || 'Quiz').replace(/[\\/?*[\]:]/g, ' ').slice(0, 31));
+      const sheet = (q.title || 'Quiz').replace(/[\\/?*[\]:]/g, ' ');
+      X.utils.book_append_sheet(wb, X.utils.aoa_to_sheet(rows), q.exam ? sheet.slice(0, 24).trim() + ' (exam)' : sheet.slice(0, 31));
       X.writeFile(wb, (q.title || 'quiz').replace(/[^\w\- ]+/g, '') + '.xlsx');
     },
   };

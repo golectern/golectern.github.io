@@ -139,6 +139,19 @@
     return list;
   };
 
+  /** Small dropdown menu under a button. items: [[label, fn], ...] */
+  H.ui.menu = function (anchor, items) {
+    H.$$('.menu-pop').forEach((m) => m.remove());
+    const pop = h('div.menu-pop', { role: 'menu' }, items.map(([label, fn]) => h('button.menu-item', { role: 'menuitem', on: { click: () => { pop.remove(); fn(); } } }, label)));
+    document.body.appendChild(pop);
+    const r = anchor.getBoundingClientRect();
+    pop.style.top = Math.min(window.innerHeight - pop.offsetHeight - 8, r.bottom + 4) + 'px';
+    pop.style.left = Math.max(8, Math.min(window.innerWidth - pop.offsetWidth - 8, r.right - pop.offsetWidth)) + 'px';
+    const off = (e) => { if (!pop.contains(e.target) && e.target !== anchor) { pop.remove(); document.removeEventListener('mousedown', off); } };
+    setTimeout(() => document.addEventListener('mousedown', off), 0);
+    return pop;
+  };
+
   /** Standard page header */
   H.ui.topbar = function (extra) {
     return h('header.topbar',

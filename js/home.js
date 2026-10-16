@@ -102,10 +102,15 @@
       qz.appendChild(h('div.lesson-row',
         h('div.thumb.quiz-thumb', h('span.thumb-ico', '🧠')),
         h('div.lesson-main', h('div.lesson-title', q.title || t('untitled')),
-          h('div.muted.sm', t('nQuestions', { n: (q.questions || []).length }), q.subject ? ' · ' + q.subject : '')),
+          h('div.muted.sm', t('nQuestions', { n: (q.questions || []).length }), q.subject ? ' · ' + q.subject : '', q.selfPaced ? ' · 🚶 ' + t('selfPaced') : q.exam ? ' · 🔒 ' + t('examMode') : '')),
         h('div.lesson-actions',
           h('a.btn.ghost', { href: '#/quiz/' + q.id }, '✎ ' + t('edit')),
-          h('button.icon-btn', { title: t('exportExcel'), on: { click: () => H.quizIO.exportQuiz(q) } }, '⬇'),
+          h('button.icon-btn', { title: t('more'), 'aria-label': t('more'), on: { click: (e) => H.ui.menu(e.currentTarget, [
+            ['⬇ ' + t('exportExcel'), () => H.quizIO.exportQuiz(q)],
+            ['💾 ' + t('exportFile'), () => H.quizIO.exportFile(q)],
+            ['🖨 ' + t('printPaper'), () => H.exports.quizPaper(q, false)],
+            ['🔑 ' + t('answerKey'), () => H.exports.quizPaper(q, true)],
+          ]) } }, '⋯'),
           h('button.icon-btn.danger', { title: t('delete'), on: { click: async () => {
             if (await H.confirm(t('delete'), q.title, true)) { await H.store.quizzes.del(q.id); H.router.render(); }
           } } }, '✕'))));
@@ -123,6 +128,7 @@
         h('div.lesson-actions',
           r.kind !== 'attendance' ? h('button.btn.ghost.sm', { on: { click: () => H.exports.resultsXlsx(r) } }, 'Excel') : null,
           r.kind !== 'attendance' ? h('button.btn.ghost.sm', { on: { click: () => H.exports.resultsPdf(r) } }, 'PDF') : null,
+          r.kind !== 'attendance' ? h('button.btn.ghost.sm', { title: t('studentReports'), on: { click: () => H.exports.studentReports(r) } }, '👤') : null,
           r.kind === 'attendance' ? h('button.btn.ghost.sm', { on: { click: () => H.exports.attendanceXlsx(r) } }, 'Excel') : null,
           h('button.icon-btn.danger', { on: { click: async () => { await H.store.results.del(r.id); H.router.render(); } } }, '✕'))));
     }
