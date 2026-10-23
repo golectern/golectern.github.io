@@ -601,3 +601,4 @@ details.qs[open] > summary::after { content: '▴'; }
 .menu-item { background: none; border: 0; text-align: start; padding: 9px 12px; border-radius: 8px; cursor: pointer; color: var(--text); white-space: nowrap; }
 .menu-item:hover, .menu-item:focus { background: var(--panel2); outline: none; }
 .input.num.speed-sel { width: auto; min-width: 120px; }
+.dot.failing { background: var(--warn); animation: blink .5s infinite; }
