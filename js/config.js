@@ -6,4 +6,7 @@ window.Hub = window.Hub || {};
 window.Hub.CONFIG = {
   publicUrl: 'https://golectern.github.io/',
   peerServer: null,
+  // Relay (TURN) server from metered.ca — used when a phone can't reach the laptop directly
+  // (mobile data, university Wi-Fi). Credentials come from your Metered dashboard.
+  turn: { username: 'ce36927fd489c3e96cd2ffa9', credential: 'zEw2qQ47ZndlaDDh', host: 'global.relay.metered.ca' },
 };
