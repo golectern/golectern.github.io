@@ -3,6 +3,13 @@
   'use strict';
   const PREFIX = 'myhub-v1-';
 
+  /** Relay servers (UDP, TCP and TLS on 443 so they also work on strict networks) */
+  function turnServers() {
+    const tc = H.CONFIG && H.CONFIG.turn;
+    if (!tc || !tc.username) return [];
+    const host = tc.host || 'global.relay.metered.ca';
+    return [{ urls: ['turn:' + host + ':80', 'turn:' + host + ':80?transport=tcp', 'turn:' + host + ':443', 'turns:' + host + ':443?transport=tcp'], username: tc.username, credential: tc.credential }];
+  }
   function peerOptions() {
     const o = { debug: 1 };
     const cfg = (H.CONFIG && H.CONFIG.peerServer) || H.settings.get('peerServer', null);
@@ -13,8 +20,7 @@
     o.config = {
       iceServers: [
         { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
-        { urls: ['turn:eu-0.turn.peerjs.com:3478', 'turn:us-0.turn.peerjs.com:3478'], username: 'peerjs', credential: 'peerjsp' },
-      ].concat((H.CONFIG && H.CONFIG.extraIce) || []),
+      ].concat(turnServers(), (H.CONFIG && H.CONFIG.extraIce) || []),
       sdpSemantics: 'unified-plan',
     };
     return o;
@@ -118,7 +124,7 @@
       conn = peer.connect(PREFIX + code, { metadata: meta, reliable: true, serialization: 'json' });
       const c = conn;
       const to = setTimeout(() => { if (!c.open) { try { c.close(); } catch (e) { /* ignore */ } retry(); } }, 12000);
-      c.on('open', () => { clearTimeout(to); status('online'); handlers.onOpen && handlers.onOpen(); });
+      c.on('open', () => { clearTimeout(to); fails = 0; status('online'); handlers.onOpen && handlers.onOpen(); });
       c.on('data', (d) => {
         d = unchunk(c, d);
         if (!d) return;
@@ -128,7 +134,8 @@
       c.on('close', () => { clearTimeout(to); if (c === conn) retry(); });
       c.on('error', () => { clearTimeout(to); if (c === conn) retry(); });
     }
-    function retry() { if (closed) return; status('reconnecting'); clearTimeout(timer); timer = setTimeout(ensurePeer, 2500); }
+    let fails = 0;
+    function retry() { if (closed) return; fails++; status(fails >= 3 ? 'failing' : 'reconnecting'); clearTimeout(timer); timer = setTimeout(ensurePeer, 2500); }
     function ensurePeer() {
       if (closed) return;
       if (peer && !peer.destroyed && !peer.disconnected && peer.open) return connect();
@@ -137,7 +144,7 @@
       peer.on('open', connect);
       peer.on('error', (err) => {
         if (closed) return;
-        if (err.type === 'peer-unavailable') { status('nohost'); retry(); return; }
+        if (err.type === 'peer-unavailable') { fails = 0; status('nohost'); clearTimeout(timer); timer = setTimeout(ensurePeer, 2500); return; }
         retry();
       });
       peer.on('disconnected', () => { if (!closed) retry(); });
