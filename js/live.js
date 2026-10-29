@@ -510,7 +510,7 @@
       const me = rk.find((r) => r.pid === pid);
       const hideScores = !!(run && run.exam && run.phase !== 'done');
       const st = {
-        t: 'aud', code: getCode(),
+        t: 'aud', code: getCode(), lang: H.settings.get('audLang', 'en'),
         you: p ? { team: run && run.teams && p.team != null ? teamLabel(p.team) : null, name: p.name, emoji: p.emoji, score: hideScores ? null : p.score, rank: hideScores ? null : me ? me.rank : null, hand: p.hand, pace: p.pace, picked: pickedPid === pid } : null,
         qna: { open: qnaOpen, list: qna.slice().sort((a, b) => b.votes.size - a.votes.size || b.at - a.at).slice(0, 60).map((q) => ({ id: q.id, text: q.text, votes: q.votes.size, voted: q.votes.has(pid), answered: q.answered, mine: q.pid === pid })) },
         bank: { open: bankOpen, max: bankMax, mine: bank.filter((b) => b.pid === pid).map((b) => ({ text: b.q.text, type: b.q.type })) },
@@ -923,6 +923,7 @@
       count: () => named().filter((p) => p.conns.size).length,
       openQuiz, openQna, openPeople,
       showJoin: () => { stageMode = 'join'; changed(); },
+      refreshPhones: () => changed(),
       toggleReactions: () => { reactOn = !reactOn; H.settings.set('showReactions', reactOn); changed(); },
       reactionsOn: () => reactOn,
       destroy() { document.body.classList.remove('live-on'); clearInterval(tickAll); clearInterval(stageTick); if (run) clearInterval(run.spTick); if (run && (run.qi >= 0 || run.phase === 'self')) saveResults(); saveAttendance(); stage.remove(); reactLayer.remove(); },

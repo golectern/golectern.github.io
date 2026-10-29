@@ -188,6 +188,7 @@
     const qpts = h('input.input.num', { type: 'number', min: 0, max: 10000, value: H.settings.get('defaultPoints', 1000) });
     const autoHide = h('input', { type: 'checkbox', checked: H.settings.get('autoHideBar', true) });
     const reactions = h('input', { type: 'checkbox', checked: H.settings.get('showReactions', true) });
+    const audLang = h('select.input', [['en', 'English'], ['ku', 'کوردی']].map(([v, l]) => h('option', { value: v, selected: H.settings.get('audLang', 'en') === v }, l)));
     const m = H.modal('⚙ ' + t('settings'), [
       h('label.lbl', t('publicUrl')), url, h('p.hint', t('publicUrlHint')),
       h('label.lbl', t('classCode')),
@@ -198,6 +199,9 @@
         h('div', h('label.lbl', t('defaultPoints')), qpts)),
       h('label.check', autoHide, ' ', t('autoHideBar')),
       h('label.check', reactions, ' ', t('showReactions')),
+      h('label.lbl', t('studentsLang')), audLang, h('p.hint', t('studentsLangHint')),
+      H.teacher.hash() ? h('div', h('label.lbl', t('teacherLock')), h('p.hint', t('lockDeviceHint')),
+        h('button.btn.ghost.sm', { on: { click: async () => { if (await H.confirm(t('lockDevice'), t('lockDeviceConfirm'))) { H.teacher.lock(); m.close(); H.router.render(); } } } }, '🔒 ' + t('lockDevice'))) : null,
     ], { actions: [
       h('button.btn.ghost', { on: { click: () => m.close() } }, t('cancel')),
       h('button.btn.primary', { on: { click: () => {
@@ -206,11 +210,38 @@
         H.settings.set('defaultPoints', +qpts.value || 0);
         H.settings.set('autoHideBar', autoHide.checked);
         H.settings.set('showReactions', reactions.checked);
+        H.settings.set('audLang', audLang.value);
         m.close(); H.toast(t('saved'), 'ok');
       } } }, t('save')),
     ] });
   }
   H.openSettings = openSettings;
+
+  // ---------------- WELCOME (devices that aren't unlocked as a teacher device) ----------------
+  H.routes.welcome = async function (app) {
+    document.title = 'Lectern';
+    document.body.className = 'phone';
+    const inp = h('input.input.big.code-in', { maxlength: 8, placeholder: 'ABC123', autocapitalize: 'characters', 'aria-label': t('sessionCode') });
+    const go = () => { const c = inp.value.trim().toUpperCase().replace(/[^A-Z0-9]/g, ''); if (c) H.router.go('/join?s=' + c); else inp.focus(); };
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+    const unlock = () => {
+      const pw = h('input.input', { type: 'password', autocomplete: 'current-password', placeholder: '••••-••••-••••' });
+      const err = h('p.err');
+      const btn = h('button.btn.primary', { on: { click: async () => {
+        btn.disabled = true;
+        const ok = await H.teacher.check(pw.value);
+        btn.disabled = false;
+        if (ok) { m.close(); H.toast(t('unlockedDevice'), 'ok'); H.router.go('/'); H.router.render(); } else { err.textContent = t('wrongPasscode'); pw.select(); }
+      } } }, t('unlock'));
+      pw.addEventListener('keydown', (e) => { if (e.key === 'Enter') btn.click(); });
+      const m = H.modal('🔑 ' + t('teacherUnlock'), [h('p.muted', t('teacherUnlockSub')), pw, err], { actions: [h('button.btn.ghost', { on: { click: () => m.close() } }, t('cancel')), btn] });
+    };
+    app.appendChild(h('div.aud', h('div.card.join-card.welcome',
+      h('div.aud-brand', '◆ Lectern'), h('h2', t('enterCode')), h('p.muted', t('welcomeSub')), inp,
+      h('button.btn.primary.lg.block', { on: { click: go } }, t('join')),
+      h('button.link-btn', { on: { click: unlock } }, '🔑 ' + t('teacherUnlock')))));
+    setTimeout(() => inp.focus(), 50);
+  };
 
   // ---------------- HELP ----------------
   H.routes.help = async function (app) {

@@ -244,6 +244,33 @@ window.Hub = window.Hub || {};
     return all[h % all.length];
   };
 
+  // ---------- teacher lock ----------
+  // Lessons live in each browser, so visitors can never see or change yours. The lock also keeps
+  // the teacher screens off devices that haven't been unlocked with the passcode (e.g. students
+  // who open the bare link), showing them the "join a session" page instead.
+  H.teacher = {
+    hash: () => (H.CONFIG && H.CONFIG.teacherHash) || '',
+    isUnlocked() {
+      const hs = this.hash();
+      if (!hs) return true;
+      if (H.settings.get('teacherKey', '') === hs) return true;
+      // the computer you already teach from (it holds your classroom code and PIN) stays unlocked
+      if (H.settings.get('classCode', '') && H.settings.get('pin', '') && !H.settings.get('teacherLocked', false)) { H.settings.set('teacherKey', hs); return true; }
+      return false;
+    },
+    async check(pass) {
+      const enc = new TextEncoder();
+      const key = await crypto.subtle.importKey('raw', enc.encode(String(pass).trim().toUpperCase()), 'PBKDF2', false, ['deriveBits']);
+      const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: enc.encode('lectern-golectern-v1'), iterations: 150000 }, key, 256);
+      const hex = Array.from(new Uint8Array(bits)).map((b) => b.toString(16).padStart(2, '0')).join('');
+      if (hex !== this.hash()) return false;
+      H.settings.set('teacherKey', hex); H.settings.set('teacherLocked', false);
+      return true;
+    },
+    lock() { H.settings.set('teacherKey', ''); H.settings.set('teacherLocked', true); },
+  };
+  const TEACHER_ROUTES = ['home', 'lesson', 'present', 'quiz', 'help'];
+
   // ---------- router ----------
   H.routes = {};
   H.router = {
@@ -264,7 +291,8 @@ window.Hub = window.Hub || {};
       document.body.className = '';
       const parts = path.split('/').filter(Boolean);
       const name = parts[0] || 'home';
-      const fn = H.routes[name] || H.routes.home;
+      let fn = H.routes[name] || H.routes.home;
+      if ((TEACHER_ROUTES.includes(name) || !H.routes[name]) && H.routes.welcome && !H.teacher.isUnlocked()) fn = H.routes.welcome;
       try {
         const c = await fn(app, parts.slice(1), q);
         if (typeof c === 'function') this.cleanup = c;

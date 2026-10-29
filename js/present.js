@@ -482,6 +482,8 @@
             h('div.muted.sm', t('nJoined', { n: live.count() })))),
         h('div.row.wrap.sess-foot',
           h('span.muted.sm', t('status') + ': ' + t('net_' + netStatus)),
+          h('span.row.aud-lang-pick', h('span.muted.sm', t('studentsLang') + ':'),
+            [['en', 'English'], ['ku', 'کوردی']].map(([v, l]) => h('button.chip.sm' + (H.settings.get('audLang', 'en') === v ? '.on' : ''), { on: { click: () => { H.settings.set('audLang', v); live.refreshPhones(); sessModal.close(); openSession(); } } }, l))),
           h('button.btn.ghost.sm', { on: { click: () => { sessModal.close(); live.openPeople(); } } }, '🧑‍🎓 ' + t('people'))));
       sessModal = H.modal(t('session'), body, { wide: true, onClose: () => { sessModal = null; } });
     }

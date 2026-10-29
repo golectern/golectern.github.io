@@ -23,7 +23,12 @@
       onStatus: (s) => { status = s; renderHead(); },
       onOpen: () => { if (me.name) conn.send({ t: 'join', name: me.name, emoji: me.emoji }); },
       onData: (m) => {
-        if (m.t === 'aud') { const prevPicked = st && st.you && st.you.picked; st = m; onState(prevPicked); }
+        if (m.t === 'aud') {
+          const prevPicked = st && st.you && st.you.picked; st = m;
+          // the teacher chooses the students' language
+          if (m.lang && m.lang !== H.lang) { H.setLang(m.lang); const typing = document.activeElement && /INPUT|TEXTAREA/.test(document.activeElement.tagName); lastKey = ''; renderBody(true); if (typing && !me.name) { const ni = H.$('input.input.big', body); if (ni) { ni.focus(); ni.setSelectionRange(ni.value.length, ni.value.length); } } }
+          onState(prevPicked);
+        }
         else if (m.t === 'kicked' || m.t === 'locked') { conn.close(); st = null; root.innerHTML = ''; root.appendChild(h('div.center-msg', h('div.big-emoji', m.t === 'kicked' ? '🚪' : '🔐'), h('h3', t(m.t === 'kicked' ? 'kickedMsg' : 'lockedMsg')))); }
       },
     });
@@ -41,7 +46,7 @@
         st && st.you && st.you.team ? h('span.aud-team', st.you.team) : null,
         me.name ? h('button.aud-me', { on: { click: editMe } }, (me.emoji || H.emojiFor(pid)) + ' ' + me.name + (st && st.you && st.you.score ? ' · ' + st.you.score + ' ' + t('pts') : '')) : null,
         h('button.btn.ghost.sm.a11y-btn', { title: t('display'), 'aria-label': t('display'), on: { click: displayMenu } }, 'Aa'),
-        H.langToggle(() => { renderHead(); renderTabs(); lastKey = ''; renderBody(true); renderFoot(); }));
+        null);
       if (status !== 'online') head.append(h('div.aud-status', status === 'nohost' ? t('waitingHost') : t('net_' + status)));
     }
     function renderTabs() {
@@ -62,9 +67,11 @@
     function buzz(ms = 15) { try { navigator.vibrate && navigator.vibrate(ms); } catch (e) { /* ignore */ } }
 
     // ---------- name / emoji ----------
+    const nameDraft = {}; // keeps what the student typed if the screen is redrawn (e.g. language change)
     function nameForm(first) {
-      const name = h('input.input.big', { value: me.name, maxlength: 30, placeholder: t('namePlaceholder'), autocomplete: 'nickname' });
-      let emoji = me.emoji || '';
+      const name = h('input.input.big', { value: nameDraft.name != null ? nameDraft.name : me.name, maxlength: 30, placeholder: t('namePlaceholder'), autocomplete: 'nickname' });
+      name.addEventListener('input', () => { nameDraft.name = name.value; });
+      let emoji = nameDraft.emoji != null ? nameDraft.emoji : me.emoji || '';
       const grid = h('div.emoji-grid');
       const cats = Object.keys(H.EMOJI);
       let cat = cats[0];
@@ -72,13 +79,13 @@
       const drawGrid = () => {
         grid.innerHTML = ''; catRow.innerHTML = '';
         cats.forEach((c) => catRow.appendChild(h('button.chip.sm' + (c === cat ? '.on' : ''), { on: { click: () => { cat = c; drawGrid(); } } }, t('emo_' + c))));
-        H.EMOJI[cat].forEach((e) => grid.appendChild(h('button.emo' + (e === emoji ? '.on' : ''), { on: { click: () => { emoji = e; drawGrid(); } } }, e)));
+        H.EMOJI[cat].forEach((e) => grid.appendChild(h('button.emo' + (e === emoji ? '.on' : ''), { on: { click: () => { emoji = e; nameDraft.emoji = e; drawGrid(); } } }, e)));
       };
       drawGrid();
       const go = () => {
         const n = name.value.trim();
         if (!n) { name.focus(); name.classList.add('shake'); setTimeout(() => name.classList.remove('shake'), 500); return; }
-        me = { name: n, emoji }; H.settings.set('me', me);
+        me = { name: n, emoji }; H.settings.set('me', me); nameDraft.name = nameDraft.emoji = null;
         conn.send({ t: 'join', name: n, emoji });
         renderHead(); lastKey = ''; renderBody(true);
       };
@@ -465,6 +472,6 @@
     const inp = h('input.input.big.code-in', { maxlength: 8, placeholder: 'ABC123', autocapitalize: 'characters' });
     const go = () => { const c = inp.value.trim().toUpperCase(); if (c) H.router.go('/join?s=' + c); };
     inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
-    app.appendChild(h('div.aud', h('div.card.join-card', h('div.aud-brand', '◆ Lectern'), h('h2', t('enterCode')), inp, h('button.btn.primary.lg.block', { on: { click: go } }, t('join')), H.langToggle())));
+    app.appendChild(h('div.aud', h('div.card.join-card', h('div.aud-brand', '◆ Lectern'), h('h2', t('enterCode')), inp, h('button.btn.primary.lg.block', { on: { click: go } }, t('join')))));
   }
 })(window.Hub);
