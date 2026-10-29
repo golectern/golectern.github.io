@@ -56,6 +56,12 @@ If you'd rather keep opening the hub from your disk, put the address in `js/conf
 
 > Your lessons are saved in the browser you use. The disk copy (`index.html`) and the online address keep **separate** libraries. Pick one, or move lessons between them with Backup → Restore.
 
+## Privacy and the teacher lock
+
+- Lessons, quizzes and results are saved only in the browser you use. Nobody else who opens the site can see or change them, and only the GitHub account can change the site itself.
+- The teacher screens are locked with a teacher passcode. A device that hasn't been unlocked (e.g. a student opening the bare link) only sees the "Enter the session code" page. Unlock a new computer once with **Teacher? Unlock this device**; on shared computers use **⚙ Settings → Lock this device** after class.
+- Students' phones use the language you pick in **⚙ Settings** or the **📱** panel; students can't change it.
+
 ## Notes and limits
 
 - If a school network blocks the phone connection, run the laptop from a phone hotspot.
